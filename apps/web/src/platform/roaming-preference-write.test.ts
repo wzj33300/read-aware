@@ -38,7 +38,10 @@ if (process.env.ROAMING_PREFERENCE_WRITE_PROOF === "1") {
   });
   const failures: unknown[] = [];
   onAppEvent("local-write-failed", (failure) => failures.push(failure));
-  const since = (start: number) => calls.slice(start).filter((call) => call.command !== "local_device_get");
+  // A failed write's asynchronous diagnostic may arrive in the next test.
+  // Device lookup and diagnostic IPC are outside the persistence contract.
+  const since = (start: number) =>
+    calls.slice(start).filter((call) => call.command !== "local_device_get" && call.command !== "plugin:log|log");
 
   test("a roaming save commits its KV bytes and preference event in one native write", async () => {
     const start = calls.length;
