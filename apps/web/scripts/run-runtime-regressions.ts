@@ -70,7 +70,11 @@ async function main(): Promise<number> {
     return failed === 0 && !report.error && report.results.length > 0 ? 0 : 1;
   } finally {
     await chrome?.close();
-    await server.close();
+    const closing = server.close();
+    // Bun can retain HTTP keep-alive connections after Chrome exits.
+    // Release them so Vite's server.close callback can finish.
+    server.httpServer?.closeAllConnections();
+    await closing;
   }
 }
 
