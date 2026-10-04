@@ -73,7 +73,9 @@ async function main(): Promise<number> {
     const closing = server.close();
     // Bun can retain HTTP keep-alive connections after Chrome exits.
     // Release them so Vite's server.close callback can finish.
-    server.httpServer?.closeAllConnections();
+    if (server.httpServer && "closeAllConnections" in server.httpServer) {
+      server.httpServer.closeAllConnections();
+    }
     await closing;
   }
 }
