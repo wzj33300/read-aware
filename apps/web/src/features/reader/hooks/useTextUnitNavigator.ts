@@ -437,7 +437,7 @@ export function useTextUnitNavigator({
         appliedCfiRef.current = cfi;
         applyNavigatorHighlight(view, cfi, veilColorRef.current);
       }
-      setCurrent({ text: normalizeText(range.toString()), cfiRange: cfi });
+      setCurrent({ text: normalizeText(view.readText(range)), cfiRange: cfi });
       setProgress({ ordinal: index, total: unitsRef.current?.length ?? 0 });
       positionWaiter.notify();
       if (scroll && !rangeComfortablyVisible(range)) {
@@ -1034,9 +1034,10 @@ export function useTextUnitNavigator({
     if (!activeRef.current) return null;
     const units = unitsRef.current;
     const index = currentIndexRef.current;
-    if (!units || index < 0 || index + 1 >= units.length) return null;
-    return normalizeText(units[index + 1].toString()) || null;
-  }, []);
+    const view = viewRef.current;
+    if (!view || !units || index < 0 || index + 1 >= units.length) return null;
+    return normalizeText(view.readText(units[index + 1])) || null;
+  }, [viewRef]);
 
   return {
     origin: feedbackOrigin,

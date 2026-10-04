@@ -1,5 +1,10 @@
 import type { WheelPhaseEdge } from "../../../platform/wheel-phase";
 
+/** Reading-forward travel: down on a wheel, left across vertical-rl columns. */
+export function readingScrollDelta(dx: number, dy: number, horizontalFlow: boolean): number {
+  return horizontalFlow && Math.abs(dx) > Math.abs(dy) ? -dx : dy;
+}
+
 /**
  * Turns a continuous wheel/trackpad delta stream into discrete, once-per-gesture
  * triggers. A trackpad swipe is not one event but a burst: the drag itself, then

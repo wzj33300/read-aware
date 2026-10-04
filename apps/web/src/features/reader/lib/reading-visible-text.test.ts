@@ -118,6 +118,7 @@ test("an unfinished visible spread and a scan limit cannot masquerade as an empt
 test("reflowable Range semantics remain intact and do not split UTF-16 pairs", () => {
   const view = {
     isFixedLayout: false,
+    readText: (range: Range) => range.toString(),
     lastLocation: { range: { toString: () => "actual range" } },
   } as unknown as FoliateView;
   expect(readingVisibleText(view)).toEqual({

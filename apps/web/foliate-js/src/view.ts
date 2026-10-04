@@ -4,7 +4,7 @@ import type { Book, NavigationTarget, ResolvedNavigation, TOCFragment, TOCItem }
 import { makeBook, type BookInput } from "./book-loader.js";
 import { TOCProgress, SectionProgress } from "./progress.js";
 import { Overlayer, type DrawFunction, type DrawOptions } from "./overlayer.js";
-import { textWalker } from "./text-walker.js";
+import { textWalker, readText } from "./text-walker.js";
 import type { Paginator } from "./paginator.js";
 import type { FixedLayout } from "./fixed-layout.js";
 import type { TTS } from "./tts.js";
@@ -12,7 +12,14 @@ import type { Content, LoadDetail, RelocateDetail, CreateOverlayerDetail } from 
 import type { SearchMatcherOptions } from "./search.js";
 import { History, type HistoryDetail } from "./history.js";
 import { CursorAutohider } from "./cursor-autohider.js";
-import { anchorRange, anchorValue, eventElement, languageInfo, type LanguageInfo } from "./navigation.js";
+import {
+  anchorIsVisible,
+  anchorRange,
+  anchorValue,
+  eventElement,
+  languageInfo,
+  type LanguageInfo,
+} from "./navigation.js";
 import { ViewMedia } from "./view-media.js";
 import { searchBook, type SearchHit } from "./book-search.js";
 
@@ -71,6 +78,7 @@ export class View extends HTMLElement {
   lastLocation: Location | null = null;
   tts: TTS | undefined;
   readonly history = new History();
+  readonly readText = readText;
   get book() {
     return this.#book;
   }
@@ -281,8 +289,7 @@ export class View extends HTMLElement {
     const resolved = await this.resolveNavigation(search ? value.slice(SEARCH_PREFIX.length) : value);
     if (!resolved || generation !== this.#generation || (search && searchSignal.aborted)) return;
     const { index, anchor } = resolved;
-    const content = this.#getOverlayer(index);
-    if (content) {
+    for (const content of this.#getOverlayers(index)) {
       const { overlayer, doc } = content;
       overlayer.remove(overlayKey);
       if (!remove) {
@@ -300,10 +307,14 @@ export class View extends HTMLElement {
   deleteAnnotation(annotation: Annotation) {
     return this.addAnnotation(annotation, true);
   }
-  #getOverlayer(index: number) {
-    return this.#renderer
-      ?.getContents()
-      .find((content): content is Content & { overlayer: Overlayer } => content.index === index && !!content.overlayer);
+  #getOverlayers(index: number) {
+    return (
+      this.#renderer
+        ?.getContents()
+        .filter(
+          (content): content is Content & { overlayer: Overlayer } => content.index === index && !!content.overlayer,
+        ) ?? []
+    );
   }
   #createOverlayer({ doc, index, context }: LoadDetail) {
     const overlayer = new Overlayer();
@@ -326,8 +337,13 @@ export class View extends HTMLElement {
   async showAnnotation({ value }: Annotation) {
     const resolved = await this.goTo(value);
     if (!resolved) return;
-    const content = this.#getOverlayer(resolved.index);
-    const range = content && anchorRange(content.doc, anchorValue(content.doc, resolved.anchor));
+    const candidates = this.#getOverlayers(resolved.index).map((content) => ({
+      content,
+      range: anchorRange(content.doc, anchorValue(content.doc, resolved.anchor)),
+    }));
+    const range = (
+      candidates.find(({ content, range }) => range && anchorIsVisible(content.doc, range, this)) ?? candidates[0]
+    )?.range;
     if (range) this.#emit<ShowAnnotationDetail>("show-annotation", { value, index: resolved.index, range });
   }
   getCFI(index: number, range?: Range | null): string {
@@ -337,7 +353,9 @@ export class View extends HTMLElement {
     return range ? CFI.joinIndir(base, CFI.fromRange(range)) : base;
   }
   getTextRange(index: number, range: Range) {
-    const content = this.renderer?.getContents().find((content) => content.index === index);
+    const content = this.renderer
+      ?.getContents()
+      .find((content) => content.index === index && content.doc === range.startContainer.ownerDocument);
     if (
       !content ||
       content.doc !== range.startContainer.ownerDocument ||

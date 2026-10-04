@@ -269,6 +269,9 @@ export function buildReaderContentCss(settings: ReaderSettings, assets: ReaderCo
     ${fontFaceCss}
     html {
       background: ${theme.bg} !important;
+      /* Reader presets use a stable rem base, including publisher image pages
+         whose root font-size is zero to suppress whitespace around SVGs. */
+      font-size: ${REM_PX}px !important;
     }
 
     body {
@@ -369,7 +372,7 @@ ${textAlignCss(settings.textAlign)}
 
     body a[data-ra-chapter-start] {
       display: block !important;
-      margin-bottom: 0 !important;
+      margin-block-end: 0 !important;
     }
 
     body [data-ra-chapter-start="next"] {
@@ -395,28 +398,34 @@ ${textAlignCss(settings.textAlign)}
     ul,
     ol,
     blockquote {
-      margin: 0 0 ${paragraphSpacing} 0 !important;
+      margin-block: 0 ${paragraphSpacing} !important;
+      margin-inline: 0 !important;
     }
 
     h1 {
-      margin: 0 0 1.5rem 0 !important;
+      margin-block: 0 1.5rem !important;
+      margin-inline: 0 !important;
       font-size: 2.25rem !important;
       line-height: 1.05 !important;
     }
 
     h2 {
-      margin: 2.75rem 0 1.25rem 0 !important;
+      margin-block: 2.75rem 1.25rem !important;
+      margin-inline: 0 !important;
       font-size: 1.75rem !important;
       line-height: 1.12 !important;
     }
 
     h3 {
-      margin: 2.25rem 0 1rem 0 !important;
+      margin-block: 2.25rem 1rem !important;
+      margin-inline: 0 !important;
       font-size: 1.375rem !important;
       line-height: 1.18 !important;
     }
 
-    img,
+    /* EPUB Japanese composition uses gaiji images as inline glyphs. Keep
+       their publisher-defined em sizing and baseline, as for text. */
+    img:not(:where(.gaiji, .gaiji-line, .gaiji-wide)),
     svg,
     video,
     canvas {
@@ -504,14 +513,16 @@ ${textAlignCss(settings.textAlign)}
     }
 
     h4 {
-      margin: 1.85rem 0 0.75rem 0 !important;
+      margin-block: 1.85rem 0.75rem !important;
+      margin-inline: 0 !important;
       font-size: 1.15rem !important;
       line-height: 1.25 !important;
     }
 
     h5,
     h6 {
-      margin: 1.5rem 0 0.5rem 0 !important;
+      margin-block: 1.5rem 0.5rem !important;
+      margin-inline: 0 !important;
       font-size: 1rem !important;
       line-height: 1.3 !important;
     }
@@ -531,7 +542,7 @@ ${textAlignCss(settings.textAlign)}
 
     ul,
     ol {
-      padding-left: 1.6em !important;
+      padding-inline-start: 1.6em !important;
     }
 
     ul {
@@ -543,8 +554,9 @@ ${textAlignCss(settings.textAlign)}
     }
 
     li {
-      margin: 0 0 0.4em 0 !important;
-      padding-left: 0.25em !important;
+      margin-block: 0 0.4em !important;
+      margin-inline: 0 !important;
+      padding-inline-start: 0.25em !important;
     }
 
     li::marker {
@@ -555,7 +567,8 @@ ${textAlignCss(settings.textAlign)}
     ul ol,
     ol ul,
     ol ol {
-      margin: 0.4em 0 0 0 !important;
+      margin-block: 0.4em 0 !important;
+      margin-inline: 0 !important;
     }
 
     /* Must stay below the body-wide font-family override: equal specificity,
@@ -628,8 +641,8 @@ ${textAlignCss(settings.textAlign)}
     }
 
     blockquote {
-      padding-left: 1.25rem !important;
-      border-left: 2px solid ${theme.rule} !important;
+      padding-inline-start: 1.25rem !important;
+      border-inline-start: 2px solid ${theme.rule} !important;
     }
   `;
 }

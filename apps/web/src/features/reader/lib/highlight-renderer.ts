@@ -51,32 +51,43 @@ export const UNDERLINE_STROKE: Record<Highlight["color"], string> = {
  * under the text reads as a quiet hand-drawn underline rather than a solid bar.
  * Runs in the app's document context (where the overlay SVG lives).
  */
-function drawUnderline(rects: Iterable<DOMRect>, options: { color?: string } = {}): SVGGElement {
-  const { color = UNDERLINE_STROKE.yellow } = options;
+export function annotationLine(rect: DOMRect, writingMode = "horizontal-tb") {
+  const vertical = /^(vertical|sideways)-/.test(writingMode);
+  if ((vertical ? rect.height : rect.width) < 1) return null;
+  if (vertical) {
+    const inset = Math.min(5, rect.width * 0.16);
+    const x = writingMode.endsWith("-lr") ? rect.left + inset : rect.right - inset;
+    return { x1: x, y1: rect.top + 0.75, x2: x, y2: rect.bottom - 0.75 };
+  }
+  const y = rect.bottom - Math.min(5, rect.height * 0.16);
+  return { x1: rect.left + 0.75, y1: y, x2: rect.right - 0.75, y2: y };
+}
+
+function appendAnnotationLines(group: SVGGElement, rects: Iterable<DOMRect>, writingMode?: string) {
+  for (const rect of rects) {
+    const points = annotationLine(rect, writingMode);
+    if (!points) continue;
+    const line = document.createElementNS(SVG_NS, "line");
+    for (const [key, value] of Object.entries(points)) line.setAttribute(key, String(value));
+    group.append(line);
+  }
+}
+
+function drawUnderline(rects: Iterable<DOMRect>, options: { color?: string; writingMode?: string } = {}): SVGGElement {
+  const { color = UNDERLINE_STROKE.yellow, writingMode } = options;
   const group = document.createElementNS(SVG_NS, "g");
   group.setAttribute("fill", "none");
   group.setAttribute("stroke", color);
   group.setAttribute("stroke-width", "2.5");
   group.setAttribute("stroke-linecap", "round");
   group.style.opacity = "0.9";
-  for (const rect of rects) {
-    if (rect.width < 1) continue;
-    // Sit a little below the text (not hugging the descenders) so the slightly
-    // heavier rule reads as a clear underline rather than a strikethrough.
-    const y = rect.bottom - Math.min(5, rect.height * 0.16);
-    const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("x1", String(rect.left + 0.75));
-    line.setAttribute("y1", String(y));
-    line.setAttribute("x2", String(rect.right - 0.75));
-    line.setAttribute("y2", String(y));
-    group.append(line);
-  }
+  appendAnnotationLines(group, rects, writingMode);
   return group;
 }
 
 /** A noted passage's marker: a dashed underline, quietly set apart from marks. */
-function drawNote(rects: Iterable<DOMRect>, options: { color?: string } = {}): SVGGElement {
-  const { color = NOTE_STROKE } = options;
+function drawNote(rects: Iterable<DOMRect>, options: { color?: string; writingMode?: string } = {}): SVGGElement {
+  const { color = NOTE_STROKE, writingMode } = options;
   const group = document.createElementNS(SVG_NS, "g");
   group.setAttribute("fill", "none");
   group.setAttribute("stroke", color);
@@ -84,16 +95,7 @@ function drawNote(rects: Iterable<DOMRect>, options: { color?: string } = {}): S
   group.setAttribute("stroke-linecap", "round");
   group.setAttribute("stroke-dasharray", "2 3.5");
   group.style.opacity = "0.85";
-  for (const rect of rects) {
-    if (rect.width < 1) continue;
-    const y = rect.bottom - Math.min(5, rect.height * 0.16);
-    const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("x1", String(rect.left + 0.75));
-    line.setAttribute("y1", String(y));
-    line.setAttribute("x2", String(rect.right - 0.75));
-    line.setAttribute("y2", String(y));
-    group.append(line);
-  }
+  appendAnnotationLines(group, rects, writingMode);
   return group;
 }
 

@@ -12,6 +12,8 @@ import type { Anchor, Book, BookSection, MaybePromise, ResolvedNavigation, Resou
 
 import type { Overlayer } from "./overlayer.js";
 import { RendererResizeObserver } from "./resize-observer.js";
+import * as CFI from "./epubcfi.js";
+import { anchorIsVisible, anchorRange } from "./navigation.js";
 
 import type { Content, EdgeDetail, LoadDetail, RelocateDetail, RelocateReason, NativeInputBridge } from "./renderer.js";
 
@@ -19,7 +21,7 @@ type Styles = string | [string, string] | null | undefined;
 
 type TouchState = { x: number; y: number; t: number; vx: number; vy: number; pinched?: boolean };
 
-type SectionEntry = { index: number; view: SectionView; release: () => void };
+type SectionEntry = { index: number; view: SectionView; release: () => void; mirror: boolean };
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -93,6 +95,12 @@ export class Paginator extends HTMLElement {
   #footer: HTMLElement;
   #view: SectionView | null = null;
   #entries: SectionEntry[] = [];
+  // Vertical CSS columns fragment along Y. A spread displays consecutive
+  // fragments in two source-identical frames, preserving native line breaks
+  // and each document's CFI paths. The shared scroll axis advances by two pages.
+  #verticalSpread = false;
+  #spreadLoading: { primary: SectionView; navigation: number; promise: Promise<void> } | undefined;
+  #renderRevision = 0;
   #building: number | undefined;
   // Continuous scroll keeps a resident window of a TOC chapter's source
   // files around the viewport rather than the whole chapter: files are
@@ -196,6 +204,19 @@ export class Paginator extends HTMLElement {
             grid-column: 2 / 5;
             grid-row: 2;
             overflow: hidden;
+        }
+        #top.vertical-spread #container {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            align-items: start;
+            direction: ltr;
+        }
+        #top.vertical-spread #container > * {
+            grid-row: 1;
+            grid-column: 2;
+        }
+        #top.vertical-spread #container > [data-foliate-mirror] {
+            grid-column: 1;
         }
         :host([flow="scrolled"]) #container {
             grid-column: 1 / -1;
@@ -338,6 +359,7 @@ export class Paginator extends HTMLElement {
     this.addEventListener("relocate", (event) => {
       const { detail } = event as CustomEvent<RelocateDetail>;
       const select = (anchor: Anchor | null, collapse: -1 | 0 | 1) => {
+        anchor = this.#visibleAnchor(anchor);
         setSelectionTo(anchor, collapse);
         const doc =
           anchor && typeof anchor !== "number"
@@ -360,7 +382,7 @@ export class Paginator extends HTMLElement {
           !sel.rangeCount ||
           this.#inputRevision !== revision ||
           this.#navigation !== navigation ||
-          this.#view?.document !== selected.startContainer.ownerDocument
+          !this.#entries.some(({ view }) => view.document === selected.startContainer.ownerDocument)
         )
           return;
         const selRange = sel.getRangeAt(0);
@@ -395,7 +417,8 @@ export class Paginator extends HTMLElement {
       doc.addEventListener("keyup", () => (isKeyboardSelecting = false));
       doc.addEventListener("selectionchange", (event) => {
         if (this.scrolled) return;
-        const range = this.#lastVisibleRange;
+        const entry = this.#entries.find(({ view }) => view.document === doc);
+        const range = entry ? this.#getVisibleRange(entry.view) : null;
         if (!range) return;
         const sel = doc.getSelection();
         if (!sel?.rangeCount) return;
@@ -430,7 +453,7 @@ export class Paginator extends HTMLElement {
           if (
             this.#focusRequest !== request ||
             this.#navigation !== navigation ||
-            this.#view?.document !== doc ||
+            !this.#entries.some(({ view }) => view.document === doc) ||
             doc.activeElement !== target
           )
             return;
@@ -531,7 +554,9 @@ export class Paginator extends HTMLElement {
     this.#entries = this.#entries.filter((item) => item !== entry);
   }
   #keepEntry(keep?: SectionEntry) {
-    for (const entry of this.#entries) if (entry !== keep) this.#dropEntry(entry);
+    for (const entry of this.#entries)
+      if (entry !== keep && !(keep && this.#verticalSpread && entry.mirror && entry.index === keep.index))
+        this.#dropEntry(entry);
     this.#chapterToken++;
     this.#chapterEdges = {};
     this.#extensionFailed = {};
@@ -546,7 +571,7 @@ export class Paginator extends HTMLElement {
         new CustomEvent("load", { detail: { doc: entry.view.document, index: entry.index, context } }),
       );
   }
-  #createView(index: number, release: () => void): SectionEntry {
+  #createView(index: number, release: () => void, mirror = false): SectionEntry {
     const view = new SectionView({
       container: this,
       chapterStarts: this.#chapterStarts.get(index),
@@ -572,7 +597,8 @@ export class Paginator extends HTMLElement {
         void this.#scrollToAnchor(this.#anchor, "anchor", this.#anchorContext);
       },
     });
-    const entry = { index, view, release };
+    const entry = { index, view, release, mirror };
+    view.element.toggleAttribute("data-foliate-mirror", mirror);
     const next = this.#entries.find((item) => item.index > index);
     this.#container.insertBefore(view.element, next?.view.element ?? null);
     this.#entries.push(entry);
@@ -699,6 +725,13 @@ export class Paginator extends HTMLElement {
     this.#vertical = vertical;
     this.#rtl = rtl;
     this.#top.classList.toggle("vertical", vertical);
+    const bounds = this.getBoundingClientRect();
+    this.#verticalSpread =
+      vertical &&
+      !this.scrolled &&
+      bounds.width > bounds.height &&
+      Number(this.getAttribute("max-column-count") ?? 2) > 1;
+    this.#top.classList.toggle("vertical-spread", this.#verticalSpread);
 
     // set background to `doc` background
     // this is needed because the iframe does not fill the whole element
@@ -732,6 +765,8 @@ export class Paginator extends HTMLElement {
     // But we want to keep the outer padding, and make the inner gap bigger.
     // So we apply the inverse, f⁻¹ = -x / (x - 1) to the column gap.
     const gap = (-g / (g - 1)) * size;
+    const gutter = this.#verticalSpread ? width * g : 0;
+    this.#container.style.columnGap = `${gutter}px`;
 
     const flow = this.getAttribute("flow");
     if (flow === "scrolled") {
@@ -752,7 +787,7 @@ export class Paginator extends HTMLElement {
     const columnWidth = size / divisor - gap;
     this.setAttribute("dir", rtl ? "rtl" : "ltr");
 
-    const marginalDivisor = vertical ? Math.min(2, Math.ceil(width / maxInlineSize)) : divisor;
+    const marginalDivisor = this.#verticalSpread ? 2 : vertical ? 1 : divisor;
     const marginalStyle = {
       gridTemplateColumns: `repeat(${marginalDivisor}, 1fr)`,
       gap: `${gap}px`,
@@ -767,9 +802,42 @@ export class Paginator extends HTMLElement {
     this.#header.replaceChildren(...heads);
     this.#footer.replaceChildren(...feet);
 
-    return { height, width, margin, gap, columnWidth };
+    return this.#verticalSpread
+      ? { height: height * 2, width: (width - gutter) / 2, margin, gap, columnWidth: height - gap }
+      : { height, width, margin, gap, columnWidth };
+  }
+  #positionSpread() {
+    for (const entry of this.#entries) {
+      entry.view.element.style.transform = entry.mirror ? `translateY(${-this.size / 2}px)` : "";
+      if (entry.mirror && this.#view) entry.view.syncChapter(this.#view);
+    }
+  }
+  async #ensureSpread(context: object): Promise<void> {
+    if (!this.#verticalSpread) {
+      for (const entry of this.#entries) if (entry.mirror) this.#dropEntry(entry);
+      return;
+    }
+    const primary = this.#view;
+    if (!primary?.ready) return;
+    const navigation = this.#navigation;
+    const pending = this.#spreadLoading;
+    if (pending?.primary === primary && pending.navigation === navigation) {
+      await pending.promise;
+    } else if (!this.#entries.some((entry) => entry.mirror && entry.index === this.#index && entry.view.ready)) {
+      const live = () => this.#verticalSpread && this.#view === primary && this.#navigation === navigation;
+      const loading = this.#loadSection(this.#index, live, context, false, true).then(() => {});
+      const pending = { primary, navigation, promise: loading };
+      this.#spreadLoading = pending;
+      try {
+        await loading;
+      } finally {
+        if (this.#spreadLoading === pending) this.#spreadLoading = undefined;
+      }
+    }
+    if (this.#verticalSpread && this.#view === primary && this.#navigation === navigation) this.#positionSpread();
   }
   render(context = this.#anchorContext) {
+    const revision = ++this.#renderRevision;
     if (!this.#view) return;
     if (this.#building !== undefined || this.#scrollSuspensions) {
       this.#deferredLayout = true;
@@ -784,6 +852,7 @@ export class Paginator extends HTMLElement {
     this.#layingOut = true;
     try {
       const layout = this.#beforeRender({ vertical: this.#vertical, rtl: this.#rtl });
+      if (!this.#verticalSpread) for (const entry of this.#entries) if (entry.mirror) this.#dropEntry(entry);
       for (const { view } of this.#entries) view.render(layout);
       this.#updateChapterEdges();
     } finally {
@@ -792,6 +861,13 @@ export class Paginator extends HTMLElement {
     if (changeFlow && this.scrolled && this.#chapterStarts.size) {
       this.#pendingRender = this.#goTo({ index: this.#index, anchor, context });
       void this.#pendingRender.catch((error: unknown) => console.error("Could not render continuous chapter", error));
+    } else if (this.#verticalSpread) {
+      const navigation = this.#navigation;
+      this.#pendingRender = this.#ensureSpread(context ?? {}).then(() => {
+        if (revision === this.#renderRevision && navigation === this.#navigation)
+          return this.#scrollToAnchor(anchor, "anchor", context);
+      });
+      void this.#pendingRender.catch((error: unknown) => console.error("Could not render page spread", error));
     } else void this.#scrollToAnchor(this.#anchor, "anchor", this.#anchorContext);
   }
   waitForCurrentRender() {
@@ -856,7 +932,7 @@ export class Paginator extends HTMLElement {
     return this.#vertical ? (scrolled ? "width" : "height") : scrolled ? "height" : "width";
   }
   get size() {
-    return this.#container.getBoundingClientRect()[this.sideProp];
+    return this.#container.getBoundingClientRect()[this.sideProp] * (this.#verticalSpread ? 2 : 1);
   }
   get viewSize() {
     if (this.scrolled)
@@ -875,12 +951,31 @@ export class Paginator extends HTMLElement {
   get pages() {
     return Math.round(this.viewSize / this.size);
   }
+  /** Wheel-axis translation keeps the same input identity as native scrolling. */
+  async scrollByReading(delta: number, context: object = {}) {
+    if (!this.scrolled || this.#scrollSuspensions || !Number.isFinite(delta)) return;
+    await this.#scrollTo(
+      Math.max(0, Math.min(Math.max(0, this.viewSize - this.size), this.start + delta)),
+      "scroll",
+      false,
+      context,
+    );
+  }
+  #pageDragDelta(dx: number, dy: number) {
+    // The spread's fragments retain Y coordinates internally; a physical
+    // rightward drag reveals the following page on its left.
+    return this.#verticalSpread
+      ? (-dx * this.size) / this.#container.getBoundingClientRect().width
+      : this.#vertical
+        ? dy
+        : dx;
+  }
   scrollBy(options?: ScrollToOptions): void;
   scrollBy(x: number, y: number): void;
   scrollBy(dxOrOptions: number | ScrollToOptions = 0, dy = 0) {
     const dx = typeof dxOrOptions === "number" ? dxOrOptions : (dxOrOptions.left ?? 0);
     if (typeof dxOrOptions !== "number") dy = dxOrOptions.top ?? 0;
-    const delta = this.#vertical ? dy : dx;
+    const delta = this.#pageDragDelta(dx, dy);
     const element = this.#container;
     const { scrollProp } = this;
     const [offset, a, b] = this.#scrollBounds;
@@ -890,7 +985,7 @@ export class Paginator extends HTMLElement {
     element[scrollProp] = Math.max(min, Math.min(max, element[scrollProp] + delta));
   }
   snap(vx: number, vy: number) {
-    const velocity = this.#vertical ? vy : vx;
+    const velocity = this.#pageDragDelta(vx, vy);
     const [offset, a, b] = this.#scrollBounds;
     const { start, end, pages, size } = this;
     const min = Math.abs(offset) - a;
@@ -1030,7 +1125,36 @@ export class Paginator extends HTMLElement {
     const entry = this.#entries.find((entry) => entry.view.document === doc);
     if (entry) return this.#goTo({ index: entry.index, anchor, select, context });
   }
+  #primaryAnchor(anchor: Anchor): Anchor {
+    const primary = this.#view?.document;
+    if (primary && typeof anchor !== "number") {
+      const doc = "startContainer" in anchor ? anchor.startContainer.ownerDocument : anchor.ownerDocument;
+      if (doc !== primary && this.#entries.some((entry) => entry.mirror && entry.view.document === doc)) {
+        const range = "startContainer" in anchor ? anchor : doc?.createRange();
+        if (range) {
+          if (!("startContainer" in anchor)) range.selectNode(anchor);
+          anchor = CFI.toRange(primary, CFI.parse(CFI.fromRange(range)));
+        }
+      }
+    }
+    return anchor;
+  }
+  #visibleAnchor(anchor: Anchor | null): Anchor | null {
+    if (anchor == null || typeof anchor === "number" || !this.#verticalSpread) return anchor;
+    const primary = this.#view?.document;
+    if (!primary || anchorIsVisible(primary, anchor, this.#container)) return anchor;
+    const range = anchorRange(primary, anchor);
+    if (!range) return anchor;
+    const parts = CFI.parse(CFI.fromRange(range));
+    for (const entry of this.#entries) {
+      if (!entry.mirror || !entry.view.document) continue;
+      const copy = CFI.toRange(entry.view.document, parts);
+      if (anchorIsVisible(entry.view.document, copy, this.#container)) return copy;
+    }
+    return anchor;
+  }
   async #scrollToAnchor(anchor: Anchor, reason: RelocateReason = "anchor", context: object = {}): Promise<void> {
+    anchor = this.#primaryAnchor(anchor);
     this.#anchor = anchor;
     this.#anchorIndex = this.#index;
     this.#anchorContext = context;
@@ -1074,14 +1198,14 @@ export class Paginator extends HTMLElement {
     const newPage = Math.round(anchor * (textPages - 1));
     await this.#scrollToPage(newPage + 1, reason, false, context);
   }
-  #getVisibleRange() {
-    const doc = this.#view?.document;
+  #getVisibleRange(view = this.#view) {
+    const doc = view?.document;
     if (!doc) return null;
     const size = this.#rtl ? -this.size : this.size;
     const range = this.scrolled
-      ? getVisibleRange(doc, this.start + this.#margin, this.end - this.#margin, this.#getRectMapper())
-      : getVisibleRange(doc, this.start - size, this.end - size, this.#getRectMapper());
-    return this.#view?.clampRange(range) ?? range;
+      ? getVisibleRange(doc, this.start + this.#margin, this.end - this.#margin, this.#getRectMapper(view))
+      : getVisibleRange(doc, this.start - size, this.end - size, this.#getRectMapper(view));
+    return view?.clampRange(range) ?? range;
   }
   getVisibleRanges(): { index: number; range: Range }[] {
     if (!this.scrolled) {
@@ -1130,6 +1254,7 @@ export class Paginator extends HTMLElement {
     live: () => boolean,
     context: object,
     replace = false,
+    mirror = false,
   ): Promise<SectionEntry | undefined> {
     const section = this.sections[index];
     const src = await section.load();
@@ -1149,7 +1274,7 @@ export class Paginator extends HTMLElement {
       throw new Error("Reflowable section must load a document URL");
     }
     if (replace) this.#keepEntry();
-    const entry = this.#createView(index, release);
+    const entry = this.#createView(index, release, mirror);
     const { view } = entry;
     if (!this.#view) this.#activate(entry);
     try {
@@ -1336,11 +1461,15 @@ export class Paginator extends HTMLElement {
       const doc = entry.view.document;
       if (!doc) return;
       const chapter = entry.view.chapterIndex;
-      const localAnchor = entry.view.selectChapter((typeof anchor === "function" ? anchor(doc) : anchor) ?? 0);
+      const localAnchor = entry.view.selectChapter(
+        this.#primaryAnchor((typeof anchor === "function" ? anchor(doc) : anchor) ?? 0),
+      );
       if (!this.scrolled || chapter !== entry.view.chapterIndex) {
         retireScrollLayer();
         this.#keepEntry(entry);
       }
+      if (this.#verticalSpread) await this.#ensureSpread(context);
+      if (navigation !== this.#navigation) return;
       this.#extensionFailed = {};
       this.#updateChapterEdges();
       this.#activate(entry, context, true);
@@ -1449,6 +1578,7 @@ export class Paginator extends HTMLElement {
       const resumeScroll = this.suspendScroll();
       try {
         this.#keepEntry(edge);
+        if (this.#verticalSpread) await this.#ensureSpread(context);
         this.#updateChapterEdges();
         this.#activate(edge, context, true);
         await this.#scrollToAnchor(dir < 0 ? 1 : 0, "navigation", context);

@@ -24,6 +24,23 @@ export const anchorRange = (doc: Document, anchor: Anchor | null | undefined): R
   range.selectNodeContents(anchor);
   return range;
 };
+/** Visibility of a source anchor after its iframe has been positioned/scaled. */
+export const anchorIsVisible = (doc: Document, anchor: Range | Element, viewport: Element): boolean => {
+  const frame = doc.defaultView?.frameElement;
+  if (!frame) return false;
+  const bounds = viewport.getBoundingClientRect(),
+    box = frame.getBoundingClientRect();
+  const scale = frame.clientWidth ? box.width / frame.clientWidth : 1;
+  return Array.from(anchor.getClientRects()).some(
+    (rect) =>
+      rect.width > 0 &&
+      rect.height > 0 &&
+      box.left + rect.right * scale > bounds.left &&
+      box.left + rect.left * scale < bounds.right &&
+      box.top + rect.bottom * scale > bounds.top &&
+      box.top + rect.top * scale < bounds.bottom,
+  );
+};
 export const eventElement = (target: EventTarget | null): Element | null => {
   if (isElement(target)) return target;
   if (target && "parentElement" in target && isElement(target.parentElement)) return target.parentElement;

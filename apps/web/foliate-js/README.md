@@ -57,6 +57,14 @@ resolution are public runtime contracts.
   resident at a time (loaded on approach, released when far behind). Source documents and CFIs remain separate; visible
   ranges, annotations and styles cover every resident part. Page turns cross
   TOC chapter boundaries, and closing or replacing a chapter releases all parts.
+- A paginated vertical spread displays consecutive CSS column fragments in two
+  source-identical section frames, with the first page on the right. Navigation
+  retains a canonical source anchor; selection, hit testing and annotation menus
+  resolve the visible document copy. Identify content by both section index and
+  document, and apply annotations to every displayed copy.
+- `View.readText` and the shared text walker extract ruby base text while keeping
+  original DOM nodes for CFI/range mapping. Reader selections, visible text,
+  search and speech use that reading-text policy.
 
 ## Validation
 

@@ -12,6 +12,22 @@ const pdf = (text: string): Book => ({
   sections: [{ id: "page", size: text.length, load: () => "", getText: async () => text }],
 });
 
+test("ruby source ranges paginate base text using stable source CFIs", () =>
+  withDom(async () => {
+    document.body.innerHTML =
+      "<p>名前は<ruby>言<rt>こと</rt>万<rt>よろず</rt>心<rt>こと</rt>葉<rt>は</rt></ruby>です。</p>";
+    const book: Book = { sections: [{ id: "ruby", size: 100, load: () => "", createDocument: () => document }] };
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("ruby")!);
+    const captured = captureContentRange(book, 0, range);
+    const page = await readContentRange(book, captured, { ...options, limit: 2 }, allow);
+    expect(page).toMatchObject({ text: "言万", totalLength: 4, nextOffset: 2 });
+    expect(await readContentRange(book, captured, { ...options, offset: 2 }, allow)).toMatchObject({
+      text: "心葉",
+      nextOffset: null,
+    });
+  }));
+
 test("native DOM and PDF selections produce source-readable ranges, not text-layer paths", () =>
   withDom(async () => {
     document.body.innerHTML =

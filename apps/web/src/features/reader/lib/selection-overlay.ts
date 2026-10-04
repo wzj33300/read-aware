@@ -1,4 +1,5 @@
 import type { ReadingSelectionSnapshot } from "@read-aware/core";
+import type { FoliateView } from "./foliate-engine";
 
 export type SelectionOverlayRect = {
   left: number;
@@ -23,8 +24,12 @@ export type ReaderSelectionState = {
 
 const MIN_RECT_SIDE = 1;
 
-export function getNormalizedSelectionText(selection: Selection | null) {
-  return selection?.toString().replace(/\s+/g, " ").trim() ?? "";
+export function getNormalizedSelectionText(selection: Selection | null, readText: FoliateView["readText"]) {
+  if (!selection?.rangeCount) return "";
+  return Array.from({ length: selection.rangeCount }, (_, i) => readText(selection.getRangeAt(i)))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -32,11 +37,15 @@ export function getNormalizedSelectionText(selection: Selection | null) {
  * AI dictionary so a single word can be read in context. Returns `undefined`
  * when the block adds nothing beyond the selected text itself.
  */
-export function getSelectionContext(range: Range, selectedText: string): string | undefined {
+export function getSelectionContext(
+  range: Range,
+  selectedText: string,
+  readText: FoliateView["readText"],
+): string | undefined {
   const start = range.startContainer;
   const el = start.nodeType === Node.TEXT_NODE ? start.parentElement : (start as Element | null);
   const block = el?.closest?.("p, li, blockquote, dd, figcaption, h1, h2, h3, h4, h5, h6") ?? el;
-  const raw = (block?.textContent ?? "").replace(/\s+/g, " ").trim();
+  const raw = (block ? readText(block) : "").replace(/\s+/g, " ").trim();
   if (!raw || raw === selectedText) return undefined;
 
   const MAX = 600;

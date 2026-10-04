@@ -8,6 +8,7 @@ import type { FoliateRelocateDetail, FoliateView } from "../lib/foliate-engine";
 import { readTextUnitModeState, writeTextUnitModeState } from "../lib/text-unit-mode-state";
 import { actorCause, actorOrigin, eventCause, reactionActor, stampEventCause } from "../../../platform/domain-actor";
 import { onLocalKVCommit, type KVCommit } from "../../../platform/local-store";
+import { readText } from "../../../../foliate-js/src/text-walker";
 
 test("navigator handles both event orders, same-index replacements, provider failure and retirement", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
@@ -44,6 +45,7 @@ test("navigator handles both event orders, same-index replacements, provider fai
   const segmenter: Parameters<typeof useTextUnitNavigator>[0]["segmentText"] = ({ text }) =>
     new Promise((resolve, reject) => pending.push({ text, resolve, reject }));
   const view = {
+    readText,
     getCFI: (_index: number, range: Range) => range.toString(),
     resolveCFI: (cfi: string) => ({
       index: 0,

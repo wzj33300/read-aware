@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { search, searchAsync, searchMatcher, type SearchOptions, type SearchResult } from "../foliate-js/src/search";
 import { indexText } from "../foliate-js/src/text-index";
-import { collectTextAsync, textWalker } from "../foliate-js/src/text-walker";
+import { collectTextAsync, readText, textWalker } from "../foliate-js/src/text-walker";
 import { withDom } from "./helpers/foliate-dom";
 
 async function collectSearch(strings: string[], query: string, options: SearchOptions = {}, signal?: AbortSignal) {
@@ -147,6 +147,29 @@ describe("folded search", () => {
 });
 
 describe("document text walking", () => {
+  test("ruby reading text excludes annotations while ranges retain original DOM anchors", () =>
+    withDom(async (window) => {
+      const doc = window.document;
+      doc.body.innerHTML =
+        "<p>名前は<ruby>言<rt>こと</rt>万<rt>よろず</rt>心<rt>こと</rt>葉<rp>(</rp><rt>は</rt><rp>)</rp></ruby>です。</p>";
+      expect(readText(doc)).toBe("名前は言万心葉です。");
+      const hits = [...searchMatcher(textWalker, {})(doc, "言万心葉")];
+      expect(hits).toHaveLength(1);
+      expect(readText(hits[0].range)).toBe("言万心葉");
+      expect(hits[0].range.startContainer).toBe(doc.querySelector("ruby")!.firstChild!);
+      expect(
+        (
+          await collectTextAsync(doc, (node) =>
+            node.nodeType === 1 ? NodeFilter.FILTER_SKIP : NodeFilter.FILTER_ACCEPT,
+          )
+        ).strings.join(""),
+      ).toBe("名前は言万心葉です。");
+      const rubyOnly = doc.createRange();
+      rubyOnly.selectNodeContents(doc.querySelector("rt")!);
+      expect(readText(rubyOnly)).toBe("");
+      rubyOnly.selectNodeContents(doc.querySelector("rt")!.firstChild!);
+      expect(readText(rubyOnly)).toBe("");
+    }));
   test("search returns DOM ranges and ignores script/style content", () =>
     withDom((window) => {
       const doc = window.document;

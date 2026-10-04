@@ -28,6 +28,7 @@ import { runZoomRegressions } from "./foliate-zoom-regressions";
 import { runFoliateRegressions } from "./foliate-regressions";
 import { runScrollChapterRegressions } from "./foliate-scroll-chapter-regressions";
 import { runViewRegressions } from "./foliate-view-regressions";
+import { runVerticalRegressions } from "./foliate-vertical-regressions";
 import { runDocumentLayoutRegressions } from "./reader-document-layout-regressions";
 
 export type RuntimeResult = { suite: string; name: string; passed: boolean; details?: string };
@@ -75,6 +76,7 @@ async function run(report: RuntimeReport): Promise<void> {
     ["zoom", () => runZoomRegressions({ pdf, view, fixed })],
     ["mobi", () => runMOBIRegressions({ view })],
     ["view", () => runViewRegressions({ view, footnotes, media })],
+    ["vertical", () => runVerticalRegressions(view.View)],
     ["paginator", () => runPaginatorRegressions(paginator.Paginator)],
     ["media", () => runMediaRegressions(paginator.Paginator)],
     ["chapter", () => runChapterRegressions(view.View)],

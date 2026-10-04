@@ -6,6 +6,16 @@ import { withDom } from "./helpers/foliate-dom.js";
 const ssmlNS = "http://www.w3.org/2001/10/synthesis";
 const xmlNS = "http://www.w3.org/XML/1998/namespace";
 
+test("TTS emits Japanese ruby base text once and retains source highlight nodes", () =>
+  withDom((window) => {
+    const doc = window.document;
+    doc.body.innerHTML =
+      '<p lang="ja"><ruby>言<rt>こと</rt>万<rt>よろず</rt>心<rt>こと</rt>葉<rt>は</rt></ruby>です。</p>';
+    const tts = new TTS(doc, textWalker, () => {}, "sentence");
+    const output = new window.DOMParser().parseFromString(tts.start() ?? "", "application/xml");
+    expect(output.documentElement.textContent).toBe("言万心葉です。");
+  }));
+
 test("TTS preserves inline text, marks and paragraph navigation", () =>
   withDom((window) => {
     const doc = window.document;

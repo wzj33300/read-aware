@@ -35,9 +35,9 @@ function read(view: FoliateView): ReadingVisibleText {
       renderer && "getVisibleRanges" in renderer && renderer.scrolled
         ? renderer
             .getVisibleRanges()
-            .map(({ range }) => range.toString())
+            .map(({ range }) => view.readText(range))
             .join("\n")
-        : range.toString();
+        : view.readText(range);
     return {
       text: prefix(text, MAX_CHARS),
       state: { status: text.trim() ? "available" : "empty", source: "range", truncated: text.length > MAX_CHARS },

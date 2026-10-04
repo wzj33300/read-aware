@@ -15,13 +15,14 @@ const walkRange = function* (range: Range, walker: TreeWalker): Generator<Node, 
 };
 
 const walkDocument = function* (walker: TreeWalker): Generator<Node, void, unknown> {
+  if (walker.currentNode.nodeType === 3 || walker.currentNode.nodeType === 4) yield walker.currentNode;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) yield node;
 };
 
 const acceptNode = (node: Node): number => {
   if (node.nodeType === 1) {
     const name = node.nodeName.toLowerCase();
-    if (name === "script" || name === "style") return NodeFilter.FILTER_REJECT;
+    if (name === "script" || name === "style" || name === "rt" || name === "rp") return NodeFilter.FILTER_REJECT;
     return NodeFilter.FILTER_SKIP;
   }
   return NodeFilter.FILTER_ACCEPT;
@@ -38,11 +39,21 @@ function* collectTextSteps(
   const doc = root.ownerDocument ?? (isDocument(root) ? root : null);
   if (!doc) throw new Error("Text walker requires a document-owned root");
   const filter = NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION;
-  const walker = doc.createTreeWalker(root, filter, { acceptNode: filterFunc || acceptNode });
+  const walker = doc.createTreeWalker(root, filter, {
+    acceptNode: (node) =>
+      acceptNode(node) === NodeFilter.FILTER_REJECT
+        ? NodeFilter.FILTER_REJECT
+        : filterFunc
+          ? filterFunc(node)
+          : acceptNode(node),
+  });
   const nodes: Node[] = [],
     offsets: number[] = [],
     strings: string[] = [];
   for (const node of isRange ? walkRange(x, walker) : walkDocument(walker)) {
+    // TreeWalker does not filter its root. A range wholly inside rt (or a
+    // text-node root) still needs the same policy as a whole document.
+    if (node.parentElement?.closest("script, style, rt, rp")) continue;
     const offset = isRange && node === x.startContainer ? x.startOffset : 0;
     nodes.push(node);
     offsets.push(offset);
@@ -67,6 +78,11 @@ export function* textWalker<T>(
   let step = steps.next();
   while (!step.done) step = steps.next();
   yield* func(step.value.strings, step.value.makeRange);
+}
+
+/** Reading text and source ranges deliberately differ for ruby annotations. */
+export function readText(node: Node | Range): string {
+  return [...textWalker(node, (strings) => [strings.join("")])][0] ?? "";
 }
 
 export async function collectTextAsync(

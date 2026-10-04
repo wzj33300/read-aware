@@ -23,6 +23,7 @@ export async function runMediaRegressions(PaginatorClass: typeof Paginator): Pro
   const picture = `<img alt="Cover" src="${source}">`;
   const covers = {
     svg: `<div><svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 465 719"><title>Cover artwork</title><image width="465" height="719" href="${source}"/></svg></div>`,
+    japanese: `<style>html, body { font-size: 0; margin: 0; padding: 0; }</style><div><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100%" height="100%" viewBox="0 0 465 719"><image width="465" height="719" xlink:href="${source}"/></svg></div>`,
     table: `<div></div><div>&nbsp;</div><div><table><tr><td>${picture}</td></tr></table></div><div style="page-break-after:always"></div>`,
   };
   const css = (mode: ReadingMode, large = false) =>
@@ -128,6 +129,25 @@ export async function runMediaRegressions(PaginatorClass: typeof Paginator): Pro
         },
       );
     }
+  }
+  for (const mode of ["paginated-single", "paginated-double", "scroll"] as const) {
+    await run(
+      `${mode}: Japanese inline glyphs retain em sizing and paragraph spacing follows the block axis`,
+      `<style>html { writing-mode: vertical-rl } img.gaiji { display: inline-block; width: 1em; height: 1em; margin: 0 }</style><p>日本語<img class="gaiji" src="${source}" alt="TM">本文</p><p>次の段落</p>`,
+      mode,
+      async (_renderer, doc) => {
+        const win = doc.defaultView!;
+        const image = doc.querySelector("img")!;
+        const style = win.getComputedStyle(image);
+        const size = parseFloat(win.getComputedStyle(doc.body).fontSize);
+        assert(style.display === "inline-block", "Inline glyph became a block illustration");
+        assert(Math.abs(image.getBoundingClientRect().width - size) < 1, "Inline glyph lost its em width");
+        assert(Math.abs(image.getBoundingClientRect().height - size) < 1, "Inline glyph lost its em height");
+        const paragraph = win.getComputedStyle(doc.querySelector("p")!);
+        assert(paragraph.marginBlockEnd === "20px", "Paragraph spacing missed the vertical block axis");
+        assert(paragraph.marginInlineEnd === "0px", "Paragraph spacing shortened the vertical line");
+      },
+    );
   }
   await run(
     "ordinary illustrations reserve their margins and data tables keep their borders",

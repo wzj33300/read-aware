@@ -265,6 +265,11 @@ export class SectionView {
   get chapterIndex() {
     return this.#chapters?.index ?? 0;
   }
+  /** Two frames of a vertical spread expose the same source chapter. */
+  syncChapter(source: SectionView) {
+    if (this.#chapters) this.#chapters.index = source.chapterIndex;
+    this.#applyChapterWindow();
+  }
   get startsChapter() {
     return this.chapterIndex > 0 || !!this.#chapters?.startsAtBeginning;
   }

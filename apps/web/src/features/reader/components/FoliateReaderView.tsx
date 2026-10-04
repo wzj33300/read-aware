@@ -56,7 +56,7 @@ import { createReaderPanelIntent, readerPanelIntentAtom, type ReaderPanelKind } 
 import { useTextUnitNavigator } from "../hooks/useTextUnitNavigator";
 import { readTextUnitModeState } from "../lib/text-unit-mode-state";
 import type { ModeRequest, ReadingModeController } from "../lib/reading-mode-controller";
-import { createWheelGesture, type WheelGesture } from "../lib/wheel-gesture";
+import { createWheelGesture, readingScrollDelta, type WheelGesture } from "../lib/wheel-gesture";
 import { resolveActivatedImage } from "../lib/image-activation";
 import { useImageViewer } from "../hooks/useImageViewer";
 import { ReaderAnnotationMenu } from "./ReaderAnnotationMenu";
@@ -734,7 +734,7 @@ export function FoliateReaderView({
         return false;
       }
 
-      const text = getNormalizedSelectionText(selectionInDoc);
+      const text = getNormalizedSelectionText(selectionInDoc, view.readText);
       if (!text || selectionInDoc.rangeCount === 0) {
         clearSelection(origin);
         return false;
@@ -776,7 +776,7 @@ export function FoliateReaderView({
         chapterHref: currentChapterHrefRef.current,
         rects,
         text,
-        context: getSelectionContext(range, text),
+        context: getSelectionContext(range, text, view.readText),
         captured,
       };
 
@@ -1218,6 +1218,14 @@ export function FoliateReaderView({
     const gestures = wheelGesturesRef.current;
     if (!gestures) return;
     if (fixedLayoutZoom.handleZoomWheel(event)) return;
+    if (event.ctrlKey) return;
+    const renderer = viewRef.current?.renderer;
+    const horizontalFlow =
+      readingModeRef.current === "scroll" &&
+      renderer &&
+      "scrollProp" in renderer &&
+      renderer.scrollProp === "scrollLeft";
+    const delta = readingScrollDelta(event.deltaX, event.deltaY, !!horizontalFlow);
     const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
     if (readingModeRef.current !== "scroll" && !event.ctrlKey && fixedLayoutZoom.panByWheel(event)) {
       gestures.pageTurn.claim(horizontal ? event.deltaX : event.deltaY, wheelEventTime(event));
@@ -1239,7 +1247,7 @@ export function FoliateReaderView({
     }
     if (textUnitModeEngineActive && textUnitModeSettings.scrollToStep) {
       if (event.cancelable) event.preventDefault();
-      const stepped = gestures.step.feed(event.deltaY, wheelEventTime(event));
+      const stepped = gestures.step.feed(delta, wheelEventTime(event));
       if (stepped !== 0) stepTextUnit(stepped > 0 ? 1 : -1);
       return;
     }
@@ -1252,8 +1260,16 @@ export function FoliateReaderView({
       if (turned !== 0) void turnPage(turned);
       return;
     }
-    dismissShellOnScrollDistanceRef.current(event.deltaY);
-    handleWheelCrossingRef.current(event.deltaY);
+    const pageSize = horizontalFlow && "size" in renderer ? renderer.size : (renderer?.clientHeight ?? 800);
+    const pixels = delta * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? pageSize : 1);
+    dismissShellOnScrollDistanceRef.current(pixels);
+    handleWheelCrossingRef.current(pixels);
+    if (horizontalFlow && "scrollByReading" in renderer) {
+      if (event.cancelable) event.preventDefault();
+      void renderer
+        .scrollByReading(pixels, readingInputContext(event))
+        .catch((error: unknown) => log.warn("Could not scroll vertical text", error));
+    }
   });
 
   // Touch counterpart, one tracker per surface. A finger drag scrolls natively
@@ -1267,32 +1283,53 @@ export function FoliateReaderView({
   // own page-drag handling. The returned handlers read the mode's gesture
   // policy at event time, so a tracker outlives settings changes.
   const createTouchNavHandlers = useEffectEvent(() => {
-    let touch: { startX: number; startY: number; lastY: number; stepped: boolean } | null = null;
+    let touch: { startX: number; startY: number; lastX: number; lastY: number; stepped: boolean } | null = null;
     return {
       onTouchStart: (event: TouchEvent) => {
         const point = event.touches.length === 1 ? event.touches[0] : null;
-        touch = point ? { startX: point.screenX, startY: point.screenY, lastY: point.screenY, stepped: false } : null;
+        touch = point
+          ? { startX: point.screenX, startY: point.screenY, lastX: point.screenX, lastY: point.screenY, stepped: false }
+          : null;
       },
       onTouchMove: (event: TouchEvent) => {
         if (!touch || event.touches.length !== 1) return;
         const point = event.touches[0];
         const deltaY = touch.lastY - point.screenY;
+        const deltaX = touch.lastX - point.screenX;
+        touch.lastX = point.screenX;
         touch.lastY = point.screenY;
+        const renderer = viewRef.current?.renderer;
+        const horizontalFlow =
+          readingModeRef.current === "scroll" &&
+          renderer &&
+          "scrollProp" in renderer &&
+          renderer.scrollProp === "scrollLeft";
+        const delta = readingScrollDelta(deltaX, deltaY, !!horizontalFlow);
         const gestures = textUnitGestures();
         if (gestures.active && gestures.scrollToStep) {
           if (event.cancelable) event.preventDefault();
           if (touch.stepped) return;
           const travelY = touch.startY - point.screenY;
           const travelX = touch.startX - point.screenX;
-          if (Math.abs(travelY) < TOUCH_STEP_THRESHOLD_PX || Math.abs(travelY) <= Math.abs(travelX)) {
+          const travel = readingScrollDelta(travelX, travelY, !!horizontalFlow);
+          if (
+            Math.abs(travel) < TOUCH_STEP_THRESHOLD_PX ||
+            (!horizontalFlow && Math.abs(travelY) <= Math.abs(travelX))
+          ) {
             return;
           }
           touch.stepped = true;
-          stepTextUnit(travelY > 0 ? 1 : -1);
+          stepTextUnit(travel > 0 ? 1 : -1);
           return;
         }
-        dismissShellOnScrollDistanceRef.current(deltaY);
-        handleWheelCrossingRef.current(deltaY, TOUCH_SECTION_CROSS_OVERSCROLL_PX);
+        dismissShellOnScrollDistanceRef.current(delta);
+        handleWheelCrossingRef.current(delta, TOUCH_SECTION_CROSS_OVERSCROLL_PX);
+        if (horizontalFlow && Math.abs(deltaY) >= Math.abs(deltaX) && "scrollByReading" in renderer) {
+          if (event.cancelable) event.preventDefault();
+          void renderer
+            .scrollByReading(delta, readingInputContext(event))
+            .catch((error: unknown) => log.warn("Could not drag vertical text", error));
+        }
       },
       onTouchEnd: () => {
         touch = null;
@@ -1496,7 +1533,7 @@ export function FoliateReaderView({
     // skip the tap-to-toggle-shell handling so the two don't fight.
     const hit = viewRef.current?.renderer
       ?.getContents?.()
-      .find((content) => content.index === index)
+      .find((content) => content.index === index && content.doc === doc)
       ?.overlayer?.hitTest({ x: event.clientX, y: event.clientY });
     if (hit && hit[0]) {
       // hitTest 回的是绘制的 value（CFI），不是 overlayKey —— 与静息句的
@@ -1685,7 +1722,10 @@ export function FoliateReaderView({
             return;
           const sel = doc.getSelection?.();
           const hasSelection =
-            !!sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed && getNormalizedSelectionText(sel).length > 0;
+            !!sel &&
+            sel.rangeCount > 0 &&
+            !sel.getRangeAt(0).collapsed &&
+            getNormalizedSelectionText(sel, viewRef.current.readText).length > 0;
           if (hasSelection) {
             captureSelectionFromDoc(doc, index, { suppressContentClick: true, origin: feedback.origin });
           } else if (selectionRef.current) {
@@ -1735,7 +1775,7 @@ export function FoliateReaderView({
         if (event.detail <= 1) return;
         const hit = viewRef.current?.renderer
           ?.getContents?.()
-          .find((content) => content.index === index)
+          .find((content) => content.index === index && content.doc === doc)
           ?.overlayer?.hitTest({ x: event.clientX, y: event.clientY });
         if (hit && hit[0]) return;
         event.preventDefault();
@@ -1776,7 +1816,11 @@ export function FoliateReaderView({
 
         const sel = doc.defaultView?.getSelection?.() ?? doc.getSelection?.() ?? null;
         const hasSelection =
-          !!sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed && getNormalizedSelectionText(sel).length > 0;
+          !!sel &&
+          !!viewRef.current &&
+          sel.rangeCount > 0 &&
+          !sel.getRangeAt(0).collapsed &&
+          getNormalizedSelectionText(sel, viewRef.current.readText).length > 0;
 
         if (hasSelection) {
           captureSelectionFromDoc(doc, index, { suppressContentClick: true });

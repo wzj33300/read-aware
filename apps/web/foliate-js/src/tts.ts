@@ -89,6 +89,7 @@ const fragmentToSSML = (
     let el: Element | undefined;
     const source = isElement(node) ? node : null;
     const nodeName = node.nodeName.toLowerCase();
+    if (nodeName === "rt" || nodeName === "rp") return;
     if (nodeName === "foliate-mark") {
       el = ssml.createElementNS(NS.SSML, "mark");
       el.setAttribute("name", source?.getAttribute("data-name") ?? "");

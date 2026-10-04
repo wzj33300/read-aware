@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { FoliateAnnotation, FoliateView } from "./foliate-engine";
-import { applyNavigatorHighlight, navigatorLineBox, removeNavigatorHighlight } from "./highlight-renderer";
+import {
+  annotationLine,
+  applyNavigatorHighlight,
+  navigatorLineBox,
+  removeNavigatorHighlight,
+} from "./highlight-renderer";
 
 function recordingView() {
   const added: FoliateAnnotation[] = [];
@@ -67,4 +72,11 @@ describe("navigator indicator geometry", () => {
       height: 646,
     });
   });
+});
+
+test("underline and note strokes follow the selected line's writing axis", () => {
+  const rect = { left: 10, right: 30, top: 20, bottom: 220, width: 20, height: 200 } as DOMRect;
+  expect(annotationLine(rect, "vertical-rl")).toEqual({ x1: 26.8, x2: 26.8, y1: 20.75, y2: 219.25 });
+  expect(annotationLine(rect, "vertical-lr")).toEqual({ x1: 13.2, x2: 13.2, y1: 20.75, y2: 219.25 });
+  expect(annotationLine(rect)).toEqual({ x1: 10.75, x2: 29.25, y1: 215, y2: 215 });
 });
